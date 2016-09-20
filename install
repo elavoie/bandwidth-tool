@@ -1,0 +1,65 @@
+#!/usr/bin/env python
+import platform
+import sys
+import os
+import json
+from subprocess import Popen,PIPE
+
+def download(url, name):
+    output = Popen(['wget', url], stdout=PIPE).communicate()[0]
+    output = Popen(['mv', os.path.basename(url), name], stdout=PIPE).communicate()[0]
+    return output
+
+def trimA(s):
+    numstr = s[safeIndex(s,':')+1:safeIndex(s,'GB')-1].strip()
+    return int(numstr) * (2**30)
+
+def trimC(s):
+    numstr = s[safeIndex(s,':')+1:safeIndex(s,'kB')-1].strip()
+    return int(numstr) * 1024
+
+def safeIndex(s, x, offset=0):
+    if s.find(x) < 0:
+        return -1
+    return s.index(x, offset)
+
+if not os.path.isfile('bandwidth'):
+    print 'Downloading bandwidth pre-compiled executable'
+    if sys.platform == 'darwin':
+        download('https://github.com/elavoie/bandwidth/releases/download/v1.3.1.2/bandwidth-mac64', 'bandwidth')
+        output = Popen(['chmod', '+x', 'bandwidth'], stdout=PIPE).communicate()[0]
+    elif sys.platform.startswith('linux'):
+        download('https://github.com/elavoie/bandwidth/releases/download/v1.3.1.2/bandwidth-linux64', 'bandwidth')
+        output = Popen(['chmod', '+x', 'bandwidth'], stdout=PIPE).communicate()[0]
+    else:
+        raise Error('Unsupported platform: ' + str(sys.platform))
+
+if not os.path.isfile('data-cache-info.csv'):
+    print 'Obtaining CPU data cache information'
+    output = Popen(['./bandwidth', '--data-cache-info', '--csv', 'data-cache-info.csv'], stdout=PIPE).communicate()[0]
+
+lines = open('data-cache-info.csv', 'r').readlines()
+
+info = {}
+if len(lines) >= 3 and lines[2].split(',')[0] == '1': 
+    info['L1'] = { 'size': int(lines[2].split(',')[1]) }
+
+if len(lines) >= 4 and lines[3].split(',')[0] == '2': 
+    info['L2'] = { 'size': int(lines[3].split(',')[1]) }
+
+if len(lines) >= 5 and lines[4].split(',')[0] == '3':
+    info['L3'] = { 'size': int(lines[4].split(',')[1]) }
+
+if sys.platform == 'darwin':
+    info['Main-Memory'] = { 'size': trimA(os.popen('system_profiler SPHardwareDataType | grep Memory').read()) }
+elif sys.platform.startswith('linux'):
+    info['Main-Memory'] = { 'size': trimC(os.popen('cat /proc/meminfo | grep MemTotal').read()) }
+
+print json.dumps(info)
+
+
+
+#if not os.path.isfile('bandwidth-L1.csv'):
+#    print 'Executing bandwidth tests'
+#    output = Popen(['./bandwidth', '--fast', '--csv', 'bandwidth-L1.csv'], stdout=PIPE).communicate()[0]
+
