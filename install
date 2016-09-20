@@ -3,18 +3,18 @@ import platform
 import sys
 import os
 import json
-from subprocess import Popen,PIPE
+from subprocess import Popen,PIPE,check_call
 
 def download(url, name):
     output = Popen(['wget', url], stdout=PIPE).communicate()[0]
     output = Popen(['mv', os.path.basename(url), name], stdout=PIPE).communicate()[0]
     return output
 
-def trimA(s):
+def macosSizeToInt(s):
     numstr = s[safeIndex(s,':')+1:safeIndex(s,'GB')-1].strip()
     return int(numstr) * (2**30)
 
-def trimC(s):
+def linuxSizeToInt(s):
     numstr = s[safeIndex(s,':')+1:safeIndex(s,'kB')-1].strip()
     return int(numstr) * 1024
 
@@ -22,6 +22,32 @@ def safeIndex(s, x, offset=0):
     if s.find(x) < 0:
         return -1
     return s.index(x, offset)
+
+def measureBandwidth(name, size):
+    # We use 2/3 of the level size to ensure the data is resident in the given level,
+    # We avoid 1/2 of the size or less because in some cases it is faster by a factor of 2-3X
+    check_call(['./bandwidth', '--fast', '--csv', 'bandwidth-' + name + '.csv', '--lower-bound', str((size*2)/3), '--upper-bound', str(size)], stdout=sys.stdout)
+
+def retrieveMeasurements(name):
+    measurements = {}
+    category = None
+    with open('bandwidth-' + name + '.csv') as f:
+        for line in f:
+            if len(line.split(',')) < 2:
+                if line == '\n':
+                    continue
+                else:
+                    category = line[:-1]
+                    measurements[category] = []
+                    continue
+            size,bandwidth = line.split(',')
+            measurements[category].append(float(bandwidth[:-1])) 
+
+    for category,bandwidths in measurements.iteritems():
+        measurements[category] = { "max": max(bandwidths), "min":min(bandwidths), 'units': 'MB/s'}
+    return measurements
+
+
 
 if not os.path.isfile('bandwidth'):
     print 'Downloading bandwidth pre-compiled executable'
@@ -42,24 +68,31 @@ lines = open('data-cache-info.csv', 'r').readlines()
 
 info = {}
 if len(lines) >= 3 and lines[2].split(',')[0] == '1': 
-    info['L1'] = { 'size': int(lines[2].split(',')[1]) }
+    info['L1'] = { 'size': int(lines[2].split(',')[1]), 'units': 'B' }
 
 if len(lines) >= 4 and lines[3].split(',')[0] == '2': 
-    info['L2'] = { 'size': int(lines[3].split(',')[1]) }
+    info['L2'] = { 'size': int(lines[3].split(',')[1]), 'units': 'B' }
 
 if len(lines) >= 5 and lines[4].split(',')[0] == '3':
-    info['L3'] = { 'size': int(lines[4].split(',')[1]) }
+    info['L3'] = { 'size': int(lines[4].split(',')[1]), 'units': 'B' }
 
 if sys.platform == 'darwin':
-    info['Main-Memory'] = { 'size': trimA(os.popen('system_profiler SPHardwareDataType | grep Memory').read()) }
+    info['MainMemory'] = { 'size': macosSizeToInt(os.popen('system_profiler SPHardwareDataType | grep Memory').read()) , 'units': 'B'}
 elif sys.platform.startswith('linux'):
-    info['Main-Memory'] = { 'size': trimC(os.popen('cat /proc/meminfo | grep MemTotal').read()) }
+    info['MainMemory'] = { 'size': linuxSizeToInt(os.popen('cat /proc/meminfo | grep MemTotal').read()), 'units': 'B' }
 
-print json.dumps(info)
+for (name, channel) in [('L1', 'CPU-L1'), ('L2', 'L1-L2'), ('L3', 'L2-L3')]:
+    if not os.path.isfile('bandwidth-' + str(name) + '.csv'):
+        print 'Measuring bandwidth for ' + name
+        measureBandwidth(name, info[name]['size'])
+    info[channel] = retrieveMeasurements(name)
 
+name = 'MainMemory'
+if not os.path.isfile('bandwidth-' + str(name) + '.csv'):
+    print 'Measuring bandwidth for ' + name
+    measureBandwidth(name, info['L3']['size']*20)
+info['L3-MainMemory'] = retrieveMeasurements(name)
+info['LL-MainMemory'] = info['L3-MainMemory'] 
 
-
-#if not os.path.isfile('bandwidth-L1.csv'):
-#    print 'Executing bandwidth tests'
-#    output = Popen(['./bandwidth', '--fast', '--csv', 'bandwidth-L1.csv'], stdout=PIPE).communicate()[0]
-
+print 'Saving bandwidth information in bandwidth.json'
+json.dump(info, file('bandwidth.json', 'w'), indent=4)
