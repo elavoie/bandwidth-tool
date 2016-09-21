@@ -6,7 +6,7 @@ It computes the max and min bandwidth obtained for tests using data sizes betwee
 
 The tests are run using the '--fast' option of the bandwidth tool, which uses 0.5 seconds per test. This is ten times faster than the default and provides good results on the machines I tested.
 
-The test downloads a pre-compiled binary for supported platforms, currently linux 64-bit and macos 64-bit.
+The test downloads a pre-compiled binary for supported platforms, currently linux 64-bit and macos 64-bit using wget.
 
 To install:
 
